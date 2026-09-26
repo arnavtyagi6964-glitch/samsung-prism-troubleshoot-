@@ -1,6 +1,7 @@
 from .deeplink_search import DeeplinkSearch, get_deeplink_search
 from .llm_extraction import extract_goal_from_text, extract_context_response
 from .cache import get_cached_response, set_cached_response, clear_cache, get_cache_stats
+from .siis_search import SiisResponseSearch, get_siis_search
 
 __all__ = [
     "DeeplinkSearch",
@@ -11,4 +12,6 @@ __all__ = [
     "set_cached_response",
     "clear_cache",
     "get_cache_stats",
+    "SiisResponseSearch",
+    "get_siis_search",
 ]
