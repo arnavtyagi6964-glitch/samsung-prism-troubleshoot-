@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -9,6 +10,7 @@ load_dotenv()
 
 from google import genai
 from google.genai import types
+from google.genai.errors import ServerError
 
 from app.schemas.models import (
     Goal,
@@ -20,6 +22,7 @@ from app.schemas.models import (
     ContextDeeplinkResponse,
 )
 from app.services.deeplink_search import get_deeplink_search
+from app.services.cache import get_cached_response, set_cached_response
 
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -146,14 +149,29 @@ def extract_goal_from_text(complaint: str, siis_response_text: str) -> Goal:
 
     prompt = build_prompt(complaint, siis_response_text)
 
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.1,
-            candidate_count=1,
-        ),
-    )
+    max_retries = 3
+    base_wait = 5
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    candidate_count=1,
+                ),
+            )
+            break
+        except ServerError as e:
+            if e.code == 503 and attempt < max_retries:
+                wait_time = base_wait * attempt
+                print(f"=== GEMINI 503 ERROR (attempt {attempt}/{max_retries}) ===")
+                print(f"Waiting {wait_time}s before retry...")
+                print(f"=== END GEMINI ERROR ===")
+                time.sleep(wait_time)
+            else:
+                raise
 
     content = response.text
     print("=== RAW GEMINI RESPONSE ===")
@@ -198,8 +216,23 @@ def extract_goal_from_text(complaint: str, siis_response_text: str) -> Goal:
 
 
 def extract_context_response(complaint: str, siis_response_text: str) -> ContextDeeplinkResponse:
+    cached = get_cached_response(complaint)
+    if cached:
+        response, score, matched_query = cached
+        print(f"=== CACHE HIT ===")
+        print(f"Matched: '{matched_query}' (similarity: {score:.1f}%)")
+        print(f"Returning cached response without calling Gemini")
+        print(f"=== END CACHE HIT ===")
+        return response
+
+    print(f"=== CACHE MISS ===")
+    print(f"Query: '{complaint}' - calling Gemini API")
+    print(f"=== END CACHE MISS ===")
+
     goal = extract_goal_from_text(complaint, siis_response_text)
-    return ContextDeeplinkResponse(contexts=[goal])
+    response = ContextDeeplinkResponse(contexts=[goal])
+    set_cached_response(complaint, response)
+    return response
 
 
 if __name__ == "__main__":
